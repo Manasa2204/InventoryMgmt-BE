@@ -24,7 +24,7 @@ const authenticate = async (req, res, next) => {
     }
 
     req.userId = userId;
-    req.organizationId = organizationId;
+    req.orgId = orgId;
     next();
   } catch (error) {
     return res.status(401).json({
