@@ -1,181 +1,186 @@
 import prisma from "../../dbClient.js";
+import { z } from "zod";
+import { errorResponse, successResponse } from "../../responses/handler.js";
 
-export const addProduct = async (req, res) => {
+const productSchema = z.object({
+  name: z.string().min(1, "Name is required"),
+  sku: z.string().min(1, "SKU is required"),
+  description: z.string().optional(),
+  quantityOnHand: z.number().int().min(0).default(0),
+  costPrice: z.number().min(0).optional().nullable(),
+  sellingPrice: z.number().min(0).optional().nullable(),
+  lowStockThreshold: z.number().int().min(0).optional().nullable(),
+});
+
+const adjustSchema = z.object({
+  adjustment: z.number().int(),
+  note: z.string().optional(),
+});
+
+export async function getAllProducts(req, res) {
   try {
-    const { productData } = req.body;
-    const data = JSON.parse(productData);
-    const { shopId, categoryId } = req.params;
-
-    const existingProduct = await prisma.product.findFirst({
-      where: { name: toTitleCase(data.productName), shopId: +shopId },
-    });
-    if (existingProduct) {
-      return res
-        .status(400)
-        .json({ message: "Product already exists", success: false });
-    }
-
-    const publicId = `product-${Date.now()}`;
-
-    const url = await UploadCompressedImageBuffer(
-      shopId,
-      req.files.productImage.data,
-      "static",
-      publicId,
-    );
-    const newProduct = await prisma.product.create({
-      data: {
-        name: toTitleCase(data.productName),
-        description: data.description,
-        imageUrl: url,
-        publicId: `static/${publicId}`,
-        weight: +data.weight,
-        price: +data.price,
-
-        category: {
-          connect: { id: +categoryId },
-        },
-        shop: {
-          connect: { id: +shopId },
-        },
-      },
-    });
-    return res.json({
-      message: "Product created successfully",
-      product: newProduct,
-      success: true,
-    });
-  } catch (error) {
-    console.log(error, "error creating product");
-    return res
-      .status(500)
-      .json({ message: "Error creating product", error, success: false });
-  }
-};
-
-export const updateProduct = async (req, res) => {
-  try {
-    const { productData, publicId: productPublicId } = req.body;
-    const data = JSON.parse(productData);
-    const { shopId, productId } = req.params;
-    let publicId, url;
-    if (req.files && req.files.productImage) {
-      publicId = `product-${Date.now()}`;
-
-      url = await UploadCompressedImageBuffer(
-        shopId,
-        req.files.productImage.data,
-        "static",
-        publicId,
-      );
-      if (productPublicId && productPublicId != "null") {
-        deleteImage(shopId, productPublicId);
-      }
-    }
-
-    const updatedProduct = await prisma.product.update({
-      where: { id: +productId },
-      data: {
-        name: toTitleCase(data.productName),
-        description: data.description,
-        ...(req.files &&
-          req.files.productImage && {
-            imageUrl: url,
-            publicId: `static/${publicId}`,
-          }),
-        weight: +data.weight,
-        price: +data.price,
-      },
-    });
-    return res.json({
-      message: "Product updated successfully",
-      product: updatedProduct,
-      success: true,
-    });
-  } catch (error) {
-    console.log(error, "error updating product");
-    return res
-      .status(500)
-      .json({ message: "Error updating product", error, success: false });
-  }
-};
-
-export const getProducts = async (req, res) => {
-  try {
-    const { shopId, categoryId } = req.params;
+    const { search } = req.query;
 
     const products = await prisma.product.findMany({
-      where: { shopId: +shopId, categoryId: +categoryId },
+      where: {
+        organizationId: req.orgId,
+        deletedAt: null,
+        ...(search && {
+          OR: [
+            { name: { contains: search, mode: "insensitive" } },
+            { sku: { contains: search, mode: "insensitive" } },
+          ],
+        }),
+      },
+      orderBy: { createdAt: "desc" },
     });
 
-    return res.json({
-      message: "Products retreived successfully",
-      products: products,
-      success: true,
+    const settings = await prisma.orgSettings.findUnique({
+      where: { organizationId: req.orgId },
     });
+    const defaultThreshold = settings?.defaultLowStockThreshold ?? 5;
+
+    const productsWithStatus = products.map((p) => ({
+      ...p,
+      effectiveThreshold: p.lowStockThreshold ?? defaultThreshold,
+      isLowStock: p.quantity <= (p.lowStockThreshold ?? defaultThreshold),
+    }));
+
+    return successResponse(res, productsWithStatus, "Products found");
   } catch (error) {
-    console.log(error, "error retreiving products");
-    return res
-      .status(500)
-      .json({ message: "Error retrieving products", error, success: false });
+    console.log(error);
+    return errorResponse(res, new Error("Internal server error"), 500);
   }
-};
-export const getAllProducts = async (req, res) => {
+}
+
+export async function getProduct(req, res) {
   try {
-    const { shopId } = req.params;
+    const { id } = req.params;
 
-    const products = await prisma.product.findMany({
-      where: { shopId: +shopId },
-    });
-    return res.json({
-      message: "Products retreived successfully",
-      products: products,
-      success: true,
-    });
-  } catch (error) {
-    console.log(error, "error retreiving products");
-    return res
-      .status(500)
-      .json({ message: "Error retrieving products", error, success: false });
-  }
-};
-
-export const deleteProduct = async (req, res) => {
-  try {
-    const { productId } = req.params;
-
-    if (!productId) {
-      return res
-        .status(400)
-        .json({ message: "Please provide productId", success: false });
-    }
-
-    const product = await prisma.product.findFirst({
-      where: { id: +productId },
+    const product = await prisma.product.findUnique({
+      where: {
+        organizationId: req.orgId,
+        deletedAt: null,
+        id: id,
+      },
     });
 
     if (!product) {
-      return res
-        .status(404)
-        .json({ message: "Product not found", success: false });
+      return errorResponse(res, new Error("Products found"), 404);
     }
 
-    await prisma.product.delete({
-      where: { id: +productId },
-    });
-
-    if (product.publicId) {
-      await deleteImage(req.user.shopId, product.publicId);
-    }
-
-    return res.json({
-      message: "Product deleted successfully",
-      success: true,
-    });
+    return successResponse(res, product, "Products found");
   } catch (error) {
-    console.log(error, "error deleting product");
-    return res
-      .status(500)
-      .json({ message: "Error deleting product", error, success: false });
+    console.log(error);
+    return errorResponse(res, new Error("Internal server error"), 500);
   }
-};
+}
+
+export async function addProduct(req, res) {
+  try {
+    const body = req.body;
+
+    const mode = body.id ? "edit" : "create";
+
+    let product = null;
+
+    const existing = await prisma.product.findFirst({
+      where: {
+        organizationId: req.orgId,
+        sku: body.sku,
+        deletedAt: null,
+      },
+    });
+
+    if (mode == "create") {
+      if (existing)
+        return errorResponse(
+          res,
+          new Error("SKU already exists in your organization"),
+          409,
+        );
+
+      product = await prisma.product.create({
+        data: {
+          ...body,
+          organizationId: req.orgId,
+          lastUpdatedBy: req.userId,
+        },
+      });
+    } else {
+      if (body.sku && body.sku !== existing.sku) {
+        const skuExists = await prisma.product.findFirst({
+          where: {
+            organizationId: req.orgId,
+            sku: body.sku,
+            deletedAt: null,
+            NOT: { id: body.id },
+          },
+        });
+
+        if (skuExists)
+          return errorResponse(
+            res,
+            new Error("SKU already exists in your organization"),
+            409,
+          );
+      }
+
+      product = await prisma.product.update({
+        data: {
+          ...body,
+          organizationId: req.orgId,
+          lastUpdatedBy: req.userId,
+        },
+        where: {
+          id: body.id,
+        },
+      });
+    }
+
+    return successResponse(res, product, "Product added");
+  } catch (error) {
+    console.log(error);
+    return errorResponse(res, new Error("Internal server error"), 500);
+  }
+}
+
+export async function adjustProduct(req, res) {
+  const productId = req.params.id;
+
+  const product = await prisma.product.findFirst({
+    where: { id: productId, organizationId: req.orgId, deletedAt: null },
+  });
+  if (!product) return errorResponse(res, new Error("Product not found"), 404);
+
+  const body = req.body;
+
+  const newQty = product.quantity + body.adjustment;
+
+  console.log(product.quantity);
+  if (newQty < 0)
+    return errorResponse(res, new Error("Quantity cannot go below 0"));
+
+  const updated = await prisma.product.update({
+    where: { id: productId },
+    data: { quantity: newQty, lastUpdatedBy: req.userId },
+  });
+
+  return successResponse(res, updated, "Stock updated successflly");
+}
+
+export async function deleteProduct(req, res) {
+  const productId = req.params.id;
+  const product = await prisma.product.findFirst({
+    where: { id: productId, organizationId: req.orgId, deletedAt: null },
+  });
+  if (!product) return errorResponse(res, "Product not found", 404);
+
+  // Soft delete
+  await prisma.product.update({
+    where: { id: productId },
+    data: { deletedAt: new Date() },
+  });
+
+  return successResponse(res, {}, "Product deleted");
+}
