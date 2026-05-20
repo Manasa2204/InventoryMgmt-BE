@@ -9,8 +9,8 @@ export const logout = async (req, res) => {
     res.clearCookie("token", {
       maxAge: 60 * 60 * 1000,
       httpOnly: true,
-      sameSite: config.env === "production",
-      secure: config.env === "production" ? "none" : "lax",
+      secure: config.env === "production",
+      sameSite: config.env === "production" ? "none" : "lax",
     });
     return successResponse(res, {}, "Logged out");
   } catch (error) {
@@ -109,8 +109,8 @@ export const login = async (req, res) => {
     res.cookie("token", token, {
       maxAge: 60 * 60 * 1000,
       httpOnly: true,
-      sameSite: config.env === "production",
-      secure: config.env === "production" ? "none" : "lax",
+      secure: config.env === "production",
+      sameSite: config.env === "production" ? "none" : "lax",
     });
 
     const response = successResponse(
