@@ -12,7 +12,7 @@ export const createServer = () => {
     .use(express.json())
     .use(
       cors({
-        origin: "http://localhost:3000", // frontend URL
+        origin: "https://inventory-mgmt-fe.vercel.app/",
         credentials: true,
       }),
     );
