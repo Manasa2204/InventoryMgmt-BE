@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "prisma migrate deploy",
-    "start": "nodemon index.js",
-    "postinstall": "prisma generate",
+    "vercel-build": "prisma generate && prisma migrate deploy",
+    "start": "node index.js",
     "prisma:generate": "prisma generate",
     "migrate:create": "prisma migrate dev --create-only",
-    "migrate-dev": "prisma migrate deploy"
+    "migrate-deploy": "prisma migrate deploy",
+    "migrate-dev": "prisma migrate dev"
   },
   "author": "",
   "license": "ISC",
