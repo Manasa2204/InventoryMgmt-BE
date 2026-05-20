@@ -66,7 +66,7 @@ export async function getProduct(req, res) {
     });
 
     if (!product) {
-      return errorResponse(res, new Error("Products found"), 404);
+      return errorResponse(res, new Error("Product not found"), 404);
     }
 
     return successResponse(res, product, "Products found");
